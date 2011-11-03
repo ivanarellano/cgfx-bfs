@@ -1,0 +1,698 @@
+/*
+*	Author: Ivan Arellano
+*	Version 1.0
+*	Date: 3/14/11
+*	Contact: ia@ivanarellano.com
+*
+*	Change Log
+*	1.0 - Initial release. Removed Blinn, Ambient Cube, Goo/Glass Alpha,
+*			Frenel Toon, Fresnel Rim Light, Half Lambert, Diffuse.A Transparency.
+*			Reflection Environment is no longer affected by glossiness, i.e., it's always flat.
+*
+* - - - - - - - - - - - - -
+*   Special thanks to Leonardo Covarrubias, Rob Galankis,
+*   and Ben Cloward for their helpful resources.
+*/
+
+#define LIGHT_COUNT 3
+string description = "SFS 1000 - Ivan Arellano";
+string URL = "http://ivanarellano.com";
+
+
+/* * * * * * * * * * * * * *
+ * AUTO-TRACKED TWEAKABLES *
+ * * * * * * * * * * * * * */
+float4x4 WorldViewProjection     : WorldViewProjection   < string UIWidget = "None"; >;
+float4x4 WorldInverseTranspose   : WorldInverseTranspose < string UIWidget = "None"; >;
+float4x4 ViewInverse             : ViewInverse           < string UIWidget = "None"; >;
+float4x4 World                   : World                 < string UIWidget = "None"; >;
+
+
+/* * * * * * * * * * * * * *
+ *       TWEAKABLES        *
+ * * * * * * * * * * * * * */
+bool useLinearColor
+<
+	string UIName = "Linear Color Space";
+> = false;
+
+bool useLightDecay
+<
+    string UIName = "Light Decay";
+> = false;
+
+float decayScale
+<
+	string UIName = "Light Decay Scale";
+    string UIWidget = "slider";
+    float UIMin = 1.0f;
+    float UIMax = 200.0f;
+    float UIStep = 0.1f;
+> = 50.0f;
+
+
+
+// Light 1 - Directional
+float4 DirectionalLight : DIRECTION
+<
+    string UIName	= "Directional Light";
+    string Object	= "TargetLight";
+    string Space	= "World";
+    int refID = 0;
+> = {100.0f, -100.0f, -100.0f, 0.0f};
+
+float3 DirectionalColor
+<
+	string UIName	= "Color";
+	string Type		= "Color";
+    int LightRef	= 0;
+> = {1.0f, 1.0f, 1.0f};
+
+
+// Light 2 - Point
+float4 PointLight_1 : POSITION
+<
+    string UIName	= "Point Light 1";
+    string Object	= "PointLight";
+    string Space	= "World";
+    int refID		= 1;
+> = {-100.0f, 100.0f, 100.0f, 0.0f};
+
+float3 PointColor_1
+<
+	string UIName	= "Color";
+	string Type     = "Color";
+    int LightRef	= 1;
+> = {0.0f, 0.0f, 0.0f};
+
+
+// Light 3 - Point
+float4 PointLight_2 : POSITION
+<
+    string UIName	= "Point Light 2";
+    string Object	= "PointLight";
+    string Space	= "World";
+    int refID		= 2;
+> = {100.0f, 100.0f, 100.0f, 0.0f};
+
+float3 PointColor_2
+<
+	string UIName	= "Color";
+	string Type     = "Color";
+    int LightRef	= 2;
+> = {0.0f, 0.0f, 0.0f};
+// End Lights
+
+
+float uvRepeat
+<
+  float UIMin     = 1.0f;
+  float UIMax     = 20.0f;
+  float UIStep    = 0.1f;
+  string UIName   = "Repeat UV";
+> = 1.0f;
+
+
+// DIFFUSE MAP
+texture diffuseMap	: DiffuseMap
+<
+    string UIName = "Diffuse Map";
+    string TextureType = "2D";
+	int Texcoord = 0;
+	int MapChannel = 1;
+>;
+
+sampler2D DiffuseMapSampler = sampler_state
+{
+	Texture       = <diffuseMap>;
+	MinFilter     = LinearMipMapLinear;
+	MagFilter     = Linear;
+	WrapS         = Wrap;
+	WrapT         = Wrap;
+	MaxAnisotropy = 4;  //some people may need to comment this out
+	LODBias       = -0.5f;
+};
+
+bool useDiffuseMap
+<
+    string UIName = "Diffuse Map";
+> = false;
+
+float3 diffuseColor : DIFFUSE
+<
+    string UIName = "Diffuse Color";
+> = {0.8f, 0.8f, 0.8f};
+
+
+
+// SPECULAR
+texture specularMap	: SpecularMap
+<
+    string UIName = "Specular Map";
+    string TextureType = "2D";
+	int Texcoord = 0;
+	int MapChannel = 1;
+>;
+
+sampler2D SpecularMapSampler = sampler_state
+{
+	Texture       = <specularMap>;
+	MinFilter     = LinearMipMapLinear;
+	MagFilter     = Linear;
+	WrapS         = Wrap;
+	WrapT         = Wrap;
+	LODBias       = -0.5f;
+};
+
+bool useSpecularMap
+<
+    string UIName = "Specular Map";
+> = false;
+
+bool useGlossMap
+<
+    string UIName = "Gloss Map in Specular Alpha";
+> = false;
+
+float glossiness
+<
+	string UIName = "Glossiness";
+    string UIWidget = "slider";
+    float UIMin = 1.0f;
+    float UIMax = 50.0f;
+    float UIStep = 0.1f;
+> = 20.0f;
+
+float3 specularColor : SPECULAR
+<
+    string UIName = "Specular Color";
+> = {0.5f, 0.5f, 0.5f};
+
+
+
+// NORMAL MAP
+texture normalMap
+<
+	string UIName       = "Normal Map";
+	string TextureType  = "2D";
+	int Texcoord		= 0;
+	int MapChannel		= 1;
+>;
+
+sampler2D NormalMapSampler = sampler_state
+{
+	Texture       = <normalMap>;
+	MinFilter     = LinearMipMapLinear;
+	MagFilter     = Linear;
+	MipFilter	  = Anisotropic;
+	WrapS         = Wrap;
+	WrapT         = Wrap;
+	MaxAnisotropy = 4; //some people may need to comment this out
+	LODBias       = -0.5f;
+};
+
+bool useNormalMap
+<
+	string UIName   = "Normal Map";
+> = false;
+
+bool invertGreen
+<
+	string UIName   = "Invert Green Channel";
+> = false;
+
+float normalIntensity
+<
+	string UIName   = "Normal Map Intensity";
+	float UIMin     = 0.0f;
+	float UIMax     = 3.0f;
+	float UIStep    = 0.1f;
+> = 1.0f;
+
+
+
+// HEIGHT MAP
+texture heightMap
+<
+	string UIName = "Height Map";
+	string TextureType  = "2D";
+	int Texcoord = 0;
+	int MapChannel = 1;
+>;
+
+sampler2D HeightMapSampler = sampler_state
+{
+	Texture		= <heightMap>;
+	MinFilter	= Linear;
+	MagFilter	= Linear;
+	MipFilter	= Linear;
+	WrapS		= Wrap;
+	WrapT		= Wrap;
+};
+
+bool useOffsetMapping
+<
+    string UIName = "Offset Mapping";
+> = false;
+
+float offsetBias
+<
+	string UIName = "Offset Bias";
+	string UIWidget = "slider";
+	float UIMin = -.1f;
+	float UIMax = 0.1f;
+	float UIStep = 0.01;
+> = 0.02f;
+
+
+
+// LIGHT MAP
+texture lightMap
+<
+	string UIName = "Light Map";
+	string TextureType  = "2D";
+	int Texcoord = 1;
+	int MapChannel = 2;
+>;
+
+sampler2D LightMapSampler = sampler_state
+{
+	Texture		= <lightMap>;
+	MinFilter	= LinearMipMapLinear;
+	MagFilter	= Linear;
+	MipFilter	= Anisotropic;
+	WrapS		= Wrap;
+	WrapT		= Wrap;
+};
+
+bool useLightMap
+<
+    string UIName = "Light Map";
+> = false;
+
+int lightMapSet
+<
+	string UIName = "UV Set";
+	string UIWidget = "slider";
+	int UIMin = 1;
+	int UIMax = 2;
+	int UIStep = 1;
+> = 1;
+
+float lightMapIntensity
+<
+	string UIName = "Light Map Intensity";
+	string UIWidget = "slider";
+	float UIMin = 1.0f;
+	float UIMax = 2.0f;
+	float UIStep = 0.01;
+> = 1.0f;
+
+
+
+// DIFFUSE WARP
+texture diffuseWarpMap
+<
+	string UIName       = "Diffuse Warp Map";
+	string TextureType  = "2D";
+	int Texcoord		= 0;
+	int MapChannel		= 1;
+>;
+
+sampler2D DiffuseWarpMapSampler = sampler_state
+{
+  Texture       = <diffuseWarpMap>;
+  MinFilter     = Point;
+  MagFilter     = Point;
+  MipFilter		= Point;
+  WrapS         = Wrap;
+  WrapT         = Wrap;
+};
+
+bool useDiffuseWarpMap
+<
+	string UIName = "Diffuse Warp Map";
+> = false;
+
+float diffuseWarpIntensity
+<
+	string UIName = "Diffuse Warp Intensity";
+	string UIWidget = "slider";
+	int UIMin = 1.0f;
+	int UIMax = 3.0f;
+	int UIStep = 0.1f;
+> = 1.0f;
+
+
+
+// Ambient Color
+float3 ambientColor : AMBIENT
+<
+	string UIName = "Ambient Color";
+> = {0.2f, 0.2f, 0.2f};
+
+
+// ENVIRONMENT
+texture reflectCubeMap		: EnvMap
+<
+	string UIName = "Cube Map";
+	string ResourceType  = "Cube";
+>;
+
+samplerCUBE EnvCubeMapSampler = sampler_state
+{
+	Texture		= <reflectCubeMap>;
+	MinFilter = LinearMipMapLinear;
+	MagFilter = Linear;
+	WrapR     = ClampToEdge;
+	WrapS     = ClampToEdge;
+	WrapT     = ClampToEdge;
+};
+
+bool useReflectCubeMap
+<
+    string UIName = "Environment Map";
+> = false;
+
+bool invertReflectCube
+<
+	string UIName = "Invert Env.";
+> = false;
+
+float reflectCubeIntensity
+<
+	string UIName = "Env. Intensity";
+    string UIWidget = "slider";
+    float UIMin = 0.0f;
+    float UIMax = 4.0f;
+    float UIStep = 0.1f;
+> = 1.0f;
+
+
+
+// ALPHA
+float globalAlpha
+<
+	string UIName = "Global Alpha";
+    string UIWidget = "slider";
+    float UIMin = 0.0f;
+    float UIMax = 1.0f;
+    float UIStep = 0.1f;
+> = 1.0f;
+
+
+
+// Utility
+bool cullMode
+<
+	string UIName = "Backface Culling";
+> = false;
+
+
+
+/* * * * * * * * *
+ *   FRAGMENTS   *
+ * * * * * * * * */
+float phong(float3 L, float3 V, float3 N, float gloss)
+{
+    float3 R = -reflect(L, N);
+    float RdV = saturate(dot(R, V));
+    if(gloss < .001f) gloss = .001f;
+    return float(pow(RdV, gloss));
+}
+
+float lambert(float3 L, float3 N)
+{
+    return float( saturate(dot(N, L)) );
+}
+
+// Gamma-correction code: Leonardo Covarrubias (blog.leocov.com)
+// In-depth article: http://http.developer.nvidia.com/GPUGems3/gpugems3_ch24.html
+float3 ungamma22(float3 input)
+{
+	if(useLinearColor)
+		return pow(input, 2.2f);
+	else 
+		return input;
+}
+
+float3 gamma22(float3 input)
+{
+	if(useLinearColor)
+		return pow(input, 1.0f / 2.2f);
+	else
+		return input;
+}
+
+float attenuation(float3 L, float scale)
+{
+    float d = length(L);
+    return (1 / d) * scale;
+}
+
+float3 normalsTangent(float4 tex, float3 n, float3 b, float3 t, float3 v)
+{
+	if(invertGreen)
+		tex.g = 1.0 - tex.g;
+
+	if(useNormalMap)
+	{
+		tex.rgb = tex.rgb * 2 - 1;
+		tex.xy *= normalIntensity;
+		
+		if(normalIntensity > 0)
+			n = normalize((tex.x * t) + (tex.y * b) + (tex.z * n));
+	}
+
+  return n;
+}
+
+float3 solveEnvironment(float4 specularTex, float3 V, float3 N)
+{
+	float3 reflectEnv = float3(0);
+
+	if(useReflectCubeMap)
+	{
+		float3 I = reflect(-V, N);
+
+		if(invertReflectCube) 
+			I = I.xzy;
+
+		reflectEnv = texCUBE(EnvCubeMapSampler, I).rgb;
+		reflectEnv = ungamma22(reflectEnv) * reflectCubeIntensity * specularColor;
+	}
+
+	return reflectEnv;
+}
+
+float2 OffsetMapping(float3 VTS, float2 UV)
+{
+	float heightMap = tex2D(HeightMapSampler, UV).r;
+	float2 fOffset = VTS.xy * (heightMap * 2 - 1) * offsetBias;
+	return UV + fOffset;
+}
+
+
+/* * * * * * * * * * *
+ *  SHADER STRUCTS   *
+ * * * * * * * * * * */
+struct a2v {
+	float4 position		: POSITION;
+	float2 texCoord		: TEXCOORD0;
+	float2 texCoord1	: TEXCOORD1;
+	float3 normal		: NORMAL;
+	float3 binormal		: BINORMAL;
+	float3 tangent		: TANGENT;
+};
+
+struct v2f {
+	float4 position			: POSITION;
+	float3 positionWS		: TEXCOORD0;
+	float2 texCoord			: TEXCOORD1;
+	float2 texCoord1		: TEXCOORD2;
+	float3 normalWS			: TEXCOORD3;
+	float3 tangentWS		: TEXCOORD4;
+	float3 binormalWS		: TEXCOORD5;
+	float3 eyeVecWS			: TEXCOORD6;
+	float2 ParallaxOffsetTS	: TEXCOORD7;
+};
+
+
+
+/* * * * * * * * * * *
+ *   VERTEX SHADER   *
+ * * * * * * * * * * */
+v2f vs(a2v In)
+{
+	v2f Out;
+
+	// OS Position to Clip Space
+    Out.position = mul(WorldViewProjection, In.position);
+    
+	// OS Normals to WS
+	Out.normalWS	 = mul(WorldInverseTranspose, float4(In.normal, 1.0f)).xyz;
+	Out.tangentWS	 = mul(WorldInverseTranspose, float4(In.tangent, 1.0f)).xyz;
+	Out.binormalWS	 = mul(WorldInverseTranspose, float4(In.binormal, 1.0f)).xyz;
+
+	// OS Position to WS
+	Out.positionWS = mul(World, In.position).xyz;
+
+	// OS Camera to WS
+	float3 worldCameraPos = float3(ViewInverse[0].w, ViewInverse[1].w, ViewInverse[2].w);
+
+	// WS Camera Vector
+    Out.eyeVecWS = worldCameraPos - Out.positionWS;
+	
+	// Propagate to Pixel Shader
+	Out.texCoord.xy = In.texCoord * uvRepeat;
+	Out.texCoord1.xy = In.texCoord1 * uvRepeat;
+
+    return Out;
+}
+
+
+
+/* * * * * * * * * * * * * *
+ *      PIXEL SHADER       *
+ * * * * * * * * * * * * * */
+float4 ps(v2f In) : COLOR
+{
+	float3 Cf = 0.0f;		// Final Pixel Color
+
+	ambientColor	= ungamma22(ambientColor);
+	diffuseColor	= ungamma22(diffuseColor);
+	specularColor	= ungamma22(specularColor);
+
+	float3 lights[LIGHT_COUNT][2] =
+	{ 
+		{ normalize(-DirectionalLight.xyz), DirectionalColor },
+		{ PointLight_1.xyz - In.positionWS,	PointColor_1},
+		{ PointLight_2.xyz - In.positionWS,	PointColor_2}
+	};
+
+	float atten[2] = { 1.0f, 1.0f };
+	if(useLightDecay)
+    {
+        atten[0] = attenuation(lights[1][0], decayScale);
+        atten[1] = attenuation(lights[2][0], decayScale);
+    }
+
+	lights[1][0] = normalize(lights[1][0]);
+	lights[2][0] = normalize(lights[2][0]);
+
+	float3 Nw	= normalize(In.normalWS);
+	float3 Tw	= normalize(In.tangentWS);
+	float3 Bw	= normalize(In.binormalWS);
+
+	// WS View
+	float3 V	= normalize(In.eyeVecWS);
+
+	float2 UV = In.texCoord;
+	float2 UV2 = In.texCoord1;
+
+	if(useOffsetMapping)
+	{
+		float3x3 TBN = float3x3(Tw, Bw, Nw); 
+		float3 Vt = normalize(mul(TBN, V));
+		UV = OffsetMapping(Vt, UV);
+	}
+
+	float4 diffuseTex = float4(0);
+	if(useDiffuseMap)
+	{
+		diffuseTex = tex2D(DiffuseMapSampler, UV);
+		diffuseTex.rgb	= ungamma22(diffuseTex.rgb);
+
+		diffuseColor *= diffuseTex.rgb;
+		ambientColor *= diffuseColor;
+	}
+
+	float4 specularTex = float4(0);
+	if(useSpecularMap)
+	{
+		specularTex = tex2D(SpecularMapSampler,	UV);
+		specularTex.rgb	= ungamma22(specularTex.rgb);
+
+		specularColor *= specularTex.rgb;
+	}
+
+	if(useGlossMap)
+	{
+		glossiness = (specularTex.a) * 100.0f;
+		
+		if(glossiness <= 1.0f)
+			glossiness = 1.0f;
+	}
+
+	float3 N = Nw;
+	if(useNormalMap)
+	{ 
+		float4 normalTex = tex2D(NormalMapSampler,	UV);
+		N = normalsTangent(normalTex, Nw, Bw, Tw, V);
+	}
+
+	float lightTex = 0;
+	if(useLightMap)
+	{
+		if(1 == lightMapSet)
+			lightTex = tex2D(LightMapSampler, UV).r;
+		else if(2 == lightMapSet)
+			lightTex = tex2D(LightMapSampler, UV2).r;
+        
+		ambientColor *= lightTex.r * lightMapIntensity;
+	}
+	
+	float3 Env = solveEnvironment(specularTex, V, N) * ambientColor;
+
+	for(int i = 0; i < LIGHT_COUNT; i++)
+	{
+		float3 L = lights[i][0];
+		float3 Lc = ungamma22(lights[i][1]);
+		float3 D = diffuseColor;
+		float3 S = specularColor;
+
+		float lightFactor = lambert(L, N);
+
+		if(!useDiffuseWarpMap)
+			D *= lightFactor;
+		else
+			D *= ungamma22(tex2D(DiffuseWarpMapSampler, lightFactor.xx).xyz) * diffuseWarpIntensity;
+
+		if(useReflectCubeMap)
+			D += Env;
+		else
+			D += ambientColor * (diffuseColor * 0.25f);
+
+		S *= phong(L, V, N, glossiness);			
+		
+		float3 light = D + S;
+		
+		if(i >= 1 && useLightDecay)
+			light *= atten[i-1];
+		
+		Cf += light * Lc;
+	}
+
+	float Alpha = globalAlpha;
+
+	Cf = gamma22(Cf);
+
+	return float4(Cf, Alpha);
+}
+
+
+/* * * * * * * * * * * * * *
+ *      TECHNIQUES	       *
+ * * * * * * * * * * * * * */
+technique Shader
+{
+	pass one
+	{
+		CullFaceEnable = cullMode;
+		CullMode = BACK;
+		BlendEnable = TRUE;
+		blendfunc = float2(srcalpha, oneminussrcalpha);
+		VertexProgram = compile arbvp1 vs();
+		FragmentProgram = compile arbfp1 ps();
+    }
+}

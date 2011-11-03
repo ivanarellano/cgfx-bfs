@@ -1,9 +1,12 @@
 /*
 *	Author: Ivan Arellano
-*	Version 2.4
-*	Date: 3/08/11
+*	Version 2.5
+*	Date: 3/14/11
 *
 *	Change Log
+*	2.5 - Fixed binormal when mirroring object, Added NXT5_NM decompression,
+*			moved Offset Mapping camera compute to pixel shader, Added
+*			new technique without Parallax Occ. Mapping for faster rendering.
 *	2.4 - Added Parallax Occlusion Mapping and Offset Mapping
 *	2.3 - Environmental/ambient rewrite (all previous versions use wrong algorithms)
 *	2.2 - Tweaked environment system, Added Diffuse Cube Map, added Backface Culling preference
@@ -25,7 +28,7 @@
 */
 
  #define LIGHT_COUNT 3
-string description = "BFS 2400 - Ivan Arellano";
+string description = "BFS 2500 - Ivan Arellano";
 string URL = "http://ivanarellano.com";
 
 
@@ -35,7 +38,6 @@ string URL = "http://ivanarellano.com";
 float4x4 WorldViewProjection     : WorldViewProjection   < string UIWidget = "None"; >;
 float4x4 WorldInverseTranspose   : WorldInverseTranspose < string UIWidget = "None"; >;
 float4x4 ViewInverse             : ViewInverse           < string UIWidget = "None"; >;
-float4x4 WorldInverse			 : WorldInverse			 < string UIWidget = "None"; >;
 float4x4 World                   : World                 < string UIWidget = "None"; >;
 
 
@@ -56,7 +58,7 @@ float4x4 World                   : World                 < string UIWidget = "No
 bool useLightDecay
 <
     string UIName = "Light Decay";
-> = true;
+> = false;
 
 float decayScale
 <
@@ -249,10 +251,10 @@ texture normalMap
 
 sampler2D NormalMapSampler = sampler_state
 {
-	Texture       = <normalMap>;
-	MinFilter     = LinearMipMapLinear;
+	Texture		  = <normalMap>;
+	MinFilter	  = LinearMipMapLinear;
 	MagFilter     = Linear;
-	MipFilter		= Anisotropic;
+	MipFilter	  = Anisotropic;
 	WrapS         = Wrap;
 	WrapT         = Wrap;
 	MaxAnisotropy = 4; //some people may need to comment this out
@@ -267,6 +269,11 @@ bool useNormalMap
 bool invertGreen
 <
 	string UIName   = "Invert Green Channel";
+> = false;
+
+bool useSwizzledNormal
+<
+	string UIName	= "DXT5_NM Compressed";
 > = false;
 
 float normalIntensity
@@ -735,6 +742,10 @@ float3 normalsTangent(float4 tex, float3 n, float3 b, float3 t, float3 v)
 	if(useNormalMap)
 	{
 		tex.rgb = tex.rgb * 2 - 1;
+
+		if(useSwizzledNormal)
+			tex.z = sqrt(1 - tex.x*tex.x - tex.y*tex.y);
+
 		tex.xy *= normalIntensity;
 		
 		if(normalIntensity > 0)
@@ -749,51 +760,44 @@ float3 solveEnvironment(float4 specularTex, float3 V, float3 N)
 	float3 ambientEnv;
 	float3 reflectEnv;
 	float3 Env;
+	float3 I;
+
 	float gloss = glossiness / 255.0f;
 
-	if(useAmbientCubeMap || useReflectCubeMap)
+	if(1 == cubeLookupMode)
+		I = reflect(-V, N);
+	else if(2 == cubeLookupMode)
+		I = refract(-V, N, refractIndex);
+
+	float3 newRay = lerp(I, -N, gloss);
+
+	if(useAmbientCubeMap)
 	{
-		float3 I;
+		if(invertAmbientCube)
+			N = N.xzy;
 
-		if(1 == cubeLookupMode)
-			I = reflect(-V, N);
-		else if(2 == cubeLookupMode)
-			I = refract(-V, N, refractIndex);
+		if(!useReflectAsAmbient)
+			ambientEnv = texCUBE(AmbientCubeMapSampler, N).rgb;
+		else
+			ambientEnv = texCUBElod(EnvCubeMapSampler, float4(N, 7.8f)).rgb;
 
-		float3 newRay2 = lerp(I, -N, gloss);
-		//float3 newRay2 = newRay1;
-
-		if(useAmbientCubeMap)
-		{
-			if(invertAmbientCube)
-				N = N.xzy;
-				//newRay1 = newRay1.xzy;
-
-			if(!useReflectAsAmbient)
-				ambientEnv = texCUBE(AmbientCubeMapSampler, N).rgb;
-			else
-				ambientEnv = texCUBElod(EnvCubeMapSampler, float4(N, 7.8f)).rgb;
-
-			ambientEnv = ungamma22(ambientEnv) * diffuseColor * ambientCubeIntensity;
-		}
-
-		if(useReflectCubeMap)
-		{
-			float falloff = fresnel(N, V, reflectCubeFalloff) + reflectCubeBias;
-
-			if(invertReflectCube) 
-				newRay2 = newRay2.xzy;
-
-			reflectEnv = texCUBElod(EnvCubeMapSampler, float4(newRay2, reflectCubeLOD)).rgb;
-			reflectEnv = ungamma22(reflectEnv) * reflectCubeIntensity * falloff * specularColor;
-
-			if(useSpecularMap)
-				reflectEnv *= specularTex.rgb;
-		}
-
+		ambientEnv = ungamma22(ambientEnv) * diffuseColor * ambientCubeIntensity;
 	}
 
-	return Env = lerp(ambientEnv, reflectEnv, gloss);
+	if(useReflectCubeMap)
+	{
+		float falloff = fresnel(N, V, reflectCubeFalloff) + reflectCubeBias;
+
+		if(invertReflectCube) 
+			newRay = newRay.xzy;
+
+		reflectEnv = texCUBElod(EnvCubeMapSampler, float4(newRay, reflectCubeLOD)).rgb;
+		reflectEnv = ungamma22(reflectEnv) * reflectCubeIntensity * falloff * specularColor;
+	}
+
+	Env = lerp(ambientEnv, reflectEnv, gloss);
+
+	return Env;
 }
 
 float solveAlpha(float Alpha, float4 diffuseTex, float3 V, float3 N)
@@ -805,55 +809,55 @@ float solveAlpha(float Alpha, float4 diffuseTex, float3 V, float3 N)
 		if(useGlass)
 		{
 			useGlass = false;
-			Alpha *= lerp(0.0f, 1.0f, Fr);
+			Alpha *= lerp(0, 1.0f, Fr);
 		}
 
 		if(useGoo)
 		{
 			useGoo = false;
-			Alpha *= lerp(1.0f, 0.0f, Fr);
+			Alpha *= lerp(1.0f, 0, Fr);
 		}
 	}
 
 	if(transparencyInDiffuse && useDiffuseMap)
-		Alpha = diffuseTex.a;
+		Alpha *= diffuseTex.a;
 
 	return Alpha;
 }
 
 float2 ParallaxOcclusionMapping(float3 VWS, float3 NWS, float2 vParallaxOffsetTS, float2 UV)
 {
-	int nNumSteps = (int)lerp(heightMaxSamples, heightMinSamples, dot(VWS, NWS));
+	int nNumSteps = (int)lerp(heightMaxSamples, heightMinSamples, dot((half3)VWS, (half3)NWS));
 
-	float fCurrHeight = 0.0;
-	float fStepSize   = 1.0 / (float)nNumSteps;
-	float fPrevHeight = 1.0;
-	float fNextHeight = 0.0;
+	half fCurrHeight = 0;
+	half fStepSize   = 1.0f / (half)nNumSteps;
+	half fPrevHeight = 1.0f;
+	half fNextHeight = 0;
 
 	int    nStepIndex = 0;
 	bool   bCondition = true;
 
-	float2 vTexOffsetPerStep = fStepSize * vParallaxOffsetTS;
-	float2 vTexCurrentOffset = UV;
-	float  fCurrentBound     = 1.0;
-	float  fParallaxAmount   = 0.0;
+	half2 vTexOffsetPerStep = fStepSize * (half2)vParallaxOffsetTS;
+	half2 vTexCurrentOffset = (half2)UV;
+	half  fCurrentBound     = 1.0f;
+	half  fParallaxAmount   = 0;
 
-	float2 pt1 = 0;
-	float2 pt2 = 0;
+	half2 pt1 = 0;
+	half2 pt2 = 0;
 
-	while (nStepIndex < nNumSteps) 
+	while(nStepIndex < nNumSteps) 
 	{
 		vTexCurrentOffset -= vTexOffsetPerStep;
 
 		// Sample height map which in this case is stored in the alpha channel of the normal map:
-		fCurrHeight = tex2Dlod(HeightMapSampler, float4(vTexCurrentOffset,0,0)).r;
+		fCurrHeight = tex2Dlod(HeightMapSampler, half4(vTexCurrentOffset,0,0)).r;
 
 		fCurrentBound -= fStepSize;
 
 		if (fCurrHeight > fCurrentBound) 
 		{   
-			pt1 = float2( fCurrentBound, fCurrHeight );
-			pt2 = float2( fCurrentBound + fStepSize, fPrevHeight );
+			pt1 = half2( fCurrentBound, fCurrHeight );
+			pt2 = half2( fCurrentBound + fStepSize, fPrevHeight );
 
 			nStepIndex = nNumSteps + 1;
 			fPrevHeight = fCurrHeight;
@@ -865,25 +869,23 @@ float2 ParallaxOcclusionMapping(float3 VWS, float3 NWS, float2 vParallaxOffsetTS
 		}
 	}
 
-	float fDelta2 = pt2.x - pt2.y;
-	float fDelta1 = pt1.x - pt1.y;
+	half fDelta2 = pt2.x - pt2.y;
+	half fDelta1 = pt1.x - pt1.y;
   
-	float fDenominator = fDelta2 - fDelta1;
+	half fDenominator = fDelta2 - fDelta1;
   
 	// SM 3.0 requires a check for divide by zero, since that operation will generate
 	// an 'Inf' number instead of 0, as previous models (conveniently) did:
-	if ( fDenominator == 0.0f )
-		fParallaxAmount = 0.0f;
+	if ( fDenominator == 0 )
+		fParallaxAmount = 0;
 	else
 		fParallaxAmount = (pt1.x * fDelta2 - pt2.x * fDelta1 ) / fDenominator;
   
-	float2 vParallaxOffset = vParallaxOffsetTS * (1 - fParallaxAmount );
+	half2 vParallaxOffset = vParallaxOffsetTS * (1 - fParallaxAmount );
 
 	// The computed texture offset for the displaced point on the pseudo-extruded surface:
-	float2 texSampleBase = UV - vParallaxOffset;
-	float2 texSample = texSampleBase;
 
-	return texSample;
+	return float2(UV - vParallaxOffset);
 }  
 
 float2 OffsetMapping(float3 VTS, float2 UV)
@@ -913,8 +915,8 @@ struct v2f {
 	float2 texCoord1		: TEXCOORD2;
 	float3 normalWS			: TEXCOORD3;
 	float3 tangentWS		: TEXCOORD4;
-	float3 eyeVecWS			: TEXCOORD5;
-	float3 eyeVecTS			: TEXCOORD6;
+	float3 binormalWS		: TEXCOORD5;
+	float3 eyeVecWS			: TEXCOORD6;
 	float2 ParallaxOffsetTS	: TEXCOORD7;
 };
 
@@ -931,50 +933,43 @@ v2f vs(a2v In)
     Out.position = mul(WorldViewProjection, In.position);
     
 	// OS Normals to WS
-	Out.normalWS	 = mul(WorldInverseTranspose, float4(In.normal, 1.0f)).xyz;
-	Out.tangentWS	 = mul(WorldInverseTranspose, float4(In.tangent, 1.0f)).xyz;
+	Out.normalWS	= mul(WorldInverseTranspose, float4(In.normal, 1.0f)).xyz;
+	Out.tangentWS	= mul(WorldInverseTranspose, float4(In.tangent, 1.0f)).xyz;
+	Out.binormalWS	= mul(WorldInverseTranspose, float4(In.binormal, 1.0f)).xyz;
 
 	// OS Position to WS
 	Out.positionWS = mul(World, In.position).xyz;
 
-	// OS Camera to WS
-	float3 worldCameraPos = float3(ViewInverse[0].w, ViewInverse[1].w, ViewInverse[2].w);
-
-	// WS Camera Vector
-    Out.eyeVecWS = worldCameraPos - Out.positionWS;
+	// OS Camera to WS, then get WS Camera Vector
+	Out.eyeVecWS = float3(ViewInverse[0].w, ViewInverse[1].w, ViewInverse[2].w) - Out.positionWS;
 	
 	// Propagate to Pixel Shader
 	Out.texCoord.xy = In.texCoord * uvRepeat;
 	Out.texCoord1.xy = In.texCoord1 * uvRepeat;
-
-	if(useOffsetMapping || useParallaxOcclusion)
+	
+	if(useParallaxOcclusion)
 	{
 		float3 normalN	 = normalize(Out.normalWS);
 		float3 tangentN	 = normalize(Out.tangentWS);
-		float3 binormalN = normalize(mul(WorldInverseTranspose, float4(In.binormal, 1.0f))).xyz;
-		float3x3 mWorldToTangent = float3x3(tangentN.x, binormalN.x, normalN.x,
-											tangentN.y, binormalN.y, normalN.y,
-											tangentN.z, binormalN.z, normalN.z);
+		float3 binormalN = normalize(Out.binormalWS);
+		float3x3 mWorldToTangent = float3x3(tangentN, binormalN, normalN);
 
-		float3 vWS = Out.eyeVecWS;
-        Out.eyeVecTS  = mul(vWS, mWorldToTangent);
+		// WS Camera to TS
+        float3 Vt = mul(mWorldToTangent, Out.eyeVecWS);
 	
-		if(useParallaxOcclusion)
-		{
-			// Compute initial parallax displacement direction:
-			float2 vParallaxDirection = normalize(Out.eyeVecTS.xy);
+		// Compute initial parallax displacement direction:
+		float2 vParallaxDirection = normalize(Vt).xy;
            
-			// The length of this vector determines the furthest amount of displacement:
-			float fLength         = length(Out.eyeVecTS);
-			float fParallaxLength = sqrt(fLength * fLength - Out.eyeVecTS.z * Out.eyeVecTS.z) / Out.eyeVecTS.z; 
+		// The length of this vector determines the furthest amount of displacement:
+		float fLength         = length(Vt);
+		float fParallaxLength = sqrt(fLength * fLength - Vt.z * Vt.z) / Vt.z; 
            
-			// Compute the actual reverse parallax displacement vector:
-			Out.ParallaxOffsetTS = vParallaxDirection * fParallaxLength;
+		// Compute the actual reverse parallax displacement vector:
+		Out.ParallaxOffsetTS = vParallaxDirection * fParallaxLength;
            
-			// Need to scale the amount of displacement to account for different height ranges
-			// in height maps. This is controlled by an artist-editable parameter:
-			Out.ParallaxOffsetTS *= offsetBias;
-	   }
+		// Need to scale the amount of displacement to account for different height ranges
+		// in height maps. This is controlled by an artist-editable parameter:
+		Out.ParallaxOffsetTS *= offsetBias;
 	}
    
     return Out;
@@ -982,9 +977,9 @@ v2f vs(a2v In)
 
 
 
-/* * * * * * * * * * * * * *
- *      PIXEL SHADER       *
- * * * * * * * * * * * * * */
+/* * * * * * * * * * * *
+ *    PIXEL SHADER     *
+ * * * * * * * * * * * */
 float4 ps(v2f In) : COLOR
 {
 	float3 Cf = 0.0f;		// Final Pixel Color
@@ -1012,26 +1007,34 @@ float4 ps(v2f In) : COLOR
 
 	float3 Nw	= normalize(In.normalWS);
 	float3 Tw	= normalize(In.tangentWS);
-	float3 Bw	= cross(Nw, Tw);
+	float3 Bw	= normalize(In.binormalWS);
 
-	// WS View
+	// WS Camera followed by TS Camera
 	float3 V	= normalize(In.eyeVecWS);
+	float3 Vt;
 
 	float2 UV = In.texCoord;
 	float2 UV2 = In.texCoord1;
-
+	
 	if(useOffsetMapping)
-		UV = OffsetMapping(normalize(In.eyeVecTS), UV);
-	else if(useParallaxOcclusion)
-		UV = ParallaxOcclusionMapping(V, Nw, In.ParallaxOffsetTS, UV);
-
+	{
+		float3x3 TBN = float3x3(Tw, Bw, Nw); 
+		Vt = normalize(mul(TBN, V));
+		UV = OffsetMapping(Vt, UV);
+	}
+	
 	float4 diffuseTex;
 	if(useDiffuseMap)
 	{
 		diffuseTex = tex2D(DiffuseMapSampler, UV);
 		diffuseTex.rgb	= ungamma22(diffuseTex.rgb);
 
-		diffuseColor *= desaturate(desatScale, contrast(conScale, diffuseTex.rgb));
+		if(desatScale > 0)
+			diffuseColor *= desaturate(desatScale, diffuseTex.rgb);
+		if(conScale > 0)
+			diffuseColor *= contrast(conScale, diffuseTex.rgb);
+
+		diffuseColor *= diffuseTex.rgb;
 		ambientColor *= diffuseColor;
 	}
 
@@ -1055,13 +1058,18 @@ float4 ps(v2f In) : COLOR
 	float3 N = Nw;
 	if(useNormalMap)
 	{ 
-		float4 normalTex = tex2D(NormalMapSampler,	UV);
-		N = normalsTangent(normalTex, Nw, Bw, Tw, V);
+		float4 nTex;
+		if(!useSwizzledNormal)
+			nTex = tex2D(NormalMapSampler,	UV);
+		else
+			nTex = tex2D(NormalMapSampler, UV).agbr;
+
+		N = normalsTangent(nTex, Nw, Bw, Tw, V);
 	}
 
+	float lightTex;
 	if(useLightMap)
 	{
-		float lightTex;
 		if(1 == lightMapSet)
 			lightTex = tex2D(LightMapSampler, UV).r;
 		else if(2 == lightMapSet)
@@ -1070,7 +1078,180 @@ float4 ps(v2f In) : COLOR
 		ambientColor *= lightTex.r * lightMapIntensity;
 	}
 
-	float3 Env = solveEnvironment(specularTex, V, N) * ambientColor;
+	float3 Env;
+	if(useAmbientCubeMap || useReflectCubeMap)
+		Env = solveEnvironment(specularTex, V, N) * ambientColor;
+
+	for(int i = 0; i < LIGHT_COUNT; i++)
+	{
+		float3 L = lights[i][0];
+		float3 Lc = ungamma22(lights[i][1]);
+		float3 D = diffuseColor;
+		float3 S = specularColor;
+		float lightFactor;
+
+		if(useHalfLambert)
+			lightFactor = halfLambert(L, N);
+		else
+			lightFactor = lambert(L, N);
+
+		if(!useDiffuseWarpMap)
+			D *= lightFactor;
+		else
+			D *= ungamma22(tex2D(DiffuseWarpMapSampler, lightFactor.xx).xyz) * diffuseWarpIntensity;
+
+		if(useAmbientCubeMap || useReflectCubeMap)
+			D += Env;
+		else
+			D += ambientColor * (diffuseColor * 0.25f);
+
+		if(1 == specularMode)
+			S *= phong(L, V, N, glossiness);
+		else if(2 == specularMode)
+			S *= blinn(L, V, N, glossiness);			
+		
+		float3 light = D + S;
+		
+		if(i >= 1 && useLightDecay)
+			light *= atten[i-1];
+		
+		Cf += light * Lc;
+	}
+
+	if(useFresnel)
+	{
+		float Fr = fresnel(N, V, fresnelPow) * fresnelScale + fresnelBias;
+		Cf += Fr * ungamma22(fresnelColor);
+	}
+
+	if(useToonFresnel)
+	{
+		float toonFr = fresnel(N, V, 5.0f) * 2.0f;
+		float edgeMask = 0.0f;
+
+		ungamma22(toonFresnelScale);
+
+		toonFr = step(toonFr, 1.0f - toonFresnelScale);
+		Cf = lerp(toonFresnelColor, Cf, toonFr);
+	}
+
+	float Alpha = solveAlpha(globalAlpha, diffuseTex, V, N);
+
+	Cf = gamma22(Cf);
+
+	return float4(Cf, Alpha);
+}
+
+
+
+/* * * * * * * * * * * * * * * * * *
+ *      PIXEL SHADER + PARALLAX    *
+ * * * * * * * * * * * * * * * * * */
+float4 ps_parallax(v2f In) : COLOR
+{
+	float3 Cf = 0.0f;		// Final Pixel Color
+
+	ambientColor	= ungamma22(ambientColor);
+	diffuseColor	= ungamma22(diffuseColor);
+	specularColor	= ungamma22(specularColor);
+
+	float3 lights[LIGHT_COUNT][2] =
+	{ 
+		{ normalize(-DirectionalLight.xyz), DirectionalColor },
+		{ PointLight_1.xyz - In.positionWS,	PointColor_1},
+		{ PointLight_2.xyz - In.positionWS,	PointColor_2}
+	};
+
+	float atten[2] = { 1.0f, 1.0f };
+	if(useLightDecay)
+    {
+        atten[0] = attenuation(lights[1][0], decayScale);
+        atten[1] = attenuation(lights[2][0], decayScale);
+    }
+
+	lights[1][0] = normalize(lights[1][0]);
+	lights[2][0] = normalize(lights[2][0]);
+
+	float3 Nw	= normalize(In.normalWS);
+	float3 Tw	= normalize(In.tangentWS);
+	float3 Bw	= normalize(In.binormalWS);
+
+	// WS Camera followed by TS Camera
+	float3 V	= normalize(In.eyeVecWS);
+	float3 Vt;
+
+	float2 UV = In.texCoord;
+	float2 UV2 = In.texCoord1;
+	
+	if(useOffsetMapping)
+	{
+		float3x3 TBN = float3x3(Tw, Bw, Nw); 
+		Vt = normalize(mul(TBN, V));
+		UV = OffsetMapping(Vt, UV);
+	}
+	else if(useParallaxOcclusion)
+	{
+		UV = ParallaxOcclusionMapping(V, Nw, In.ParallaxOffsetTS, UV);
+	}
+	
+	float4 diffuseTex;
+	if(useDiffuseMap)
+	{
+		diffuseTex = tex2D(DiffuseMapSampler, UV);
+		diffuseTex.rgb	= ungamma22(diffuseTex.rgb);
+
+		if(desatScale > 0)
+			diffuseColor *= desaturate(desatScale, diffuseTex.rgb);
+		if(conScale > 0)
+			diffuseColor *= contrast(conScale, diffuseTex.rgb);
+
+		diffuseColor *= diffuseTex.rgb;
+		ambientColor *= diffuseColor;
+	}
+
+	float4 specularTex;
+	if(useSpecularMap)
+	{
+		specularTex = tex2D(SpecularMapSampler,	UV);
+		specularTex.rgb	= ungamma22(specularTex.rgb);
+
+		specularColor *= specularTex.rgb;
+	}
+
+	if(useGlossMap)
+	{
+		glossiness = (specularTex.a) * 100.0f;
+		
+		if(glossiness <= 1.0f)
+			glossiness = 1.0f;
+	}
+
+	float3 N = Nw;
+	if(useNormalMap)
+	{ 
+		float4 nTex;
+		if(!useSwizzledNormal)
+			nTex = tex2D(NormalMapSampler,	UV);
+		else
+			nTex = tex2D(NormalMapSampler, UV).agbr;
+
+		N = normalsTangent(nTex, Nw, Bw, Tw, V);
+	}
+
+	float lightTex;
+	if(useLightMap)
+	{
+		if(1 == lightMapSet)
+			lightTex = tex2D(LightMapSampler, UV).r;
+		else if(2 == lightMapSet)
+			lightTex = tex2D(LightMapSampler, UV2).r;
+        
+		ambientColor *= lightTex.r * lightMapIntensity;
+	}
+
+	float3 Env;
+	if(useAmbientCubeMap || useReflectCubeMap)
+		Env = solveEnvironment(specularTex, V, N) * ambientColor;
 
 	for(int i = 0; i < LIGHT_COUNT; i++)
 	{
@@ -1146,5 +1327,25 @@ technique Shader
 		blendfunc = float2(srcalpha, oneminussrcalpha);
 		VertexProgram = compile gp4vp vs();
 		FragmentProgram = compile gp4fp ps();
+    }
+}
+
+technique Shader_Parallax
+{
+	pass one
+	{
+		CullFaceEnable = cullMode;
+		CullMode = BACK;
+		BlendEnable = TRUE;
+		blendfunc = float2(srcalpha, oneminussrcalpha);
+		VertexProgram = compile gp4vp vs();
+		FragmentProgram = compile gp4fp ps_parallax();
+    }
+}
+
+technique _
+{
+	pass one
+	{
     }
 }
