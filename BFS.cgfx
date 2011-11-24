@@ -4,7 +4,7 @@
 *	Date: 3/14/11
 *
 *	Change Log
-*	2.5 - Fixed binormal when mirroring object, Added NXT5_NM decompression,
+*	2.5 - Fixed binormal when mirroring object, Added DXT5_NM decompression,
 *			moved Offset Mapping camera compute to pixel shader, Added
 *			new technique without Parallax Occ. Mapping for faster rendering.
 *	2.4 - Added Parallax Occlusion Mapping and Offset Mapping
