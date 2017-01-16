@@ -11,7 +11,7 @@
 - Light Decay
 - DXT5_NM compression compatible. Uses high-quality normal recontruction that produces better results than uncompressed normal maps.
 
-SFS 1000
+## SFS 1000
 
 A small shader designed for ATI graphics cards and Maya 2012+.
 
