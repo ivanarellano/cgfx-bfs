@@ -1,10 +1,10 @@
-# BFS 2500
+![BFS 2500: A realtime viewport shader](https://raw.githubusercontent.com/ivanarellano/cgfx-bfs/master/BFS.jpg)
 
-### Features
+## Features
 - Linear Color Space 
-- Lights: 2 Point - 1 Directional
+- Lights: 2 Point and 1 Directional
 - Phong Model
-- Maps: Diffuse-Specular-Normal-Light-Glossiness
+- Texture Maps: Diffuse, Specular, Normal, Light, Glossiness
 - Reflection Cube
 - Offset Mapping
 - Diffuse Warp Mapping
